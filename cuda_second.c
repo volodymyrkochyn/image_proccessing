@@ -1,5 +1,7 @@
 %%cu
 
+// BMP-related data types based on Microsoft's own
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,17 +136,23 @@ int sum(const unsigned char* image, size_t size)
 __global__ void sum_simple(unsigned char *g_ivec,  int *g_ovec, int index)
 {
     extern __shared__ int sdata[];
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    sdata[idx] = g_ivec[(idx+index*blockDim.x)*3];
     
+    //each thread load s one element from global to shared mem
+    unsigned int tid = threadIdx.x;
+    unsigned int i =  (index * 1024 + blockIdx.x * blockDim.x + threadIdx.x)*3;
+    sdata[tid] = g_ivec[i];
     __syncthreads();
-    for (unsigned int s=1; s < blockDim.x; s *= 2) {
-        if (idx % (2*s) == 0) {
-            sdata[idx] += sdata[idx + s];
+
+    // do reduction in shared mem
+    for (unsigned int s=1; s <  blockDim.x ; s *= 2) {
+        if (tid % (2*s) == 0) {
+            sdata[tid] += sdata[tid + s];
         }
         __syncthreads();
     }
-    g_ovec[0] += sdata[0];
+    // write result for this block to global mem
+    if (tid == 0)
+        g_ovec[index + blockIdx.x] = sdata[0];
 }
 
 int main()
@@ -166,13 +174,16 @@ int main()
     cudaEventCreate(&stop);
     
     //ALLOCATE HOST MEM
-    int *h_result = (int *) malloc(sizeof(int));
+    size_t threadsPerBlock = 1024;
+    // divired by 3 means one color channel
+    const size_t resultSize = size / threadsPerBlock / 3;
+    int *h_result = (int *) malloc(sizeof(int) * resultSize);
     
     //ALLOCATE MEM
     int *d_result;
     unsigned char *d_image;
     cudaMalloc(&d_image, size);
-    cudaMalloc(&d_result, sizeof(int) * 2);
+    cudaMalloc(&d_result, sizeof(int) * resultSize);
     cudaCheckErrors("cudaMalloc fail \n");
     
     cudaEventRecord(start, 0);
@@ -187,21 +198,21 @@ int main()
 	  cudaCheckErrors("Memory copying filled image fail \n");
     
     cudaEventRecord(start, 0);
-    size_t threadsPerBlock = 1024;
     
-    // calculate for one color channel
-    int memSize = threadsPerBlock * 12; // use maximum count of shared memory
-    int bound = size / memSize / 3;
+    int bound = resultSize / 1024;
     for (int i = 0; i < bound; ++i)
-      sum_simple <<< 1, threadsPerBlock, memSize*sizeof(int) >>> (d_image, d_result, i);
+      sum_simple <<< 1024, threadsPerBlock, 1024*sizeof(int) >>> (d_image, d_result, i);
     cudaCheckErrors("Kernel sum_reduce_simple CALL fail \n");
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&time, start, stop);
     printf ("Time for the sum_reduce_simple kernel: %f ms\n", time);
     
-    cudaMemcpy(h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_result, d_result, sizeof(int) * resultSize, cudaMemcpyDeviceToHost);
 	  cudaCheckErrors("Memory copying result fail \n");
+    
+     for (int i = 1; i < resultSize; ++i)
+         h_result[0] += h_result[i];
     
     //FREE MEM
     cudaFree(d_image);
@@ -211,5 +222,6 @@ int main()
     printf ("SUM is: %d\n",h_result[0]);  
     
     free(image);
+    free(h_result);
     return 0;
 }
