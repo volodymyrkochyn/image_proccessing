@@ -176,7 +176,7 @@ int main()
     //ALLOCATE HOST MEM
     size_t threadsPerBlock = 1024;
     // divired by 3 means one color channel
-    const size_t resultSize = size / threadsPerBlock / 3;
+    const size_t resultSize = size / threadsPerBlock / threadsPerBlock / 3;
     int *h_result = (int *) malloc(sizeof(int) * resultSize);
     
     //ALLOCATE MEM
@@ -199,8 +199,7 @@ int main()
     
     cudaEventRecord(start, 0);
     
-    int bound = resultSize / 1024;
-    for (int i = 0; i < bound; ++i)
+    for (int i = 0; i < resultSize; ++i)
       sum_simple <<< 1024, threadsPerBlock, 1024*sizeof(int) >>> (d_image, d_result, i);
     cudaCheckErrors("Kernel sum_reduce_simple CALL fail \n");
     cudaEventRecord(stop, 0);
@@ -211,8 +210,8 @@ int main()
     cudaMemcpy(h_result, d_result, sizeof(int) * resultSize, cudaMemcpyDeviceToHost);
 	  cudaCheckErrors("Memory copying result fail \n");
     
-     for (int i = 1; i < resultSize; ++i)
-         h_result[0] += h_result[i];
+    for (int i = 1; i < resultSize; ++i)
+        h_result[0] += h_result[i];
     
     //FREE MEM
     cudaFree(d_image);
